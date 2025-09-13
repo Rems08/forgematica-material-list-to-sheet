@@ -1,73 +1,115 @@
-# forgematica-material-list-to-sheet
+# Forgematica Material-List to Google Sheets Converter
 
-# 🧪 How to use
+A Python script that reads a Forgematica (or similarly-structured) CSV file containing materials, totals, missing quantities, etc., and produces a Google Sheets-friendly Excel workbook with two sheets: one for total requirements and one adjusted for missing items plus user inventory inputs.
+
+---
+
+## 🚀 Features
+
+- Automatically detects the relevant CSV columns (materials/item name, total required, missing, available) using fuzzy matching.  
+- Generates two sheets in the output workbook:
+  - **TOTALS_ALL**: shows total quantities needed per material.
+  - **MISSING_ONLY**: shows what is missing + allows user to input how much they already have (units or stacks), and computes what remains.  
+- All derived calculations (stack rounding, double chest calculation, remainders, etc.) are done via formulas in the spreadsheet (Google Sheets / Excel), not by the Python script.  
+- Includes a **REFS** sheet with a lookup table for custom stack sizes and helpful documentation/links.  
+
+---
+
+## 📋 Requirements
+
+- Python 3.10 or newer  
+- Packages:  
+  - `pandas`  
+  - `openpyxl`  
+
+You may install dependencies via:
 
 ```bash
-# Basic usage (auto-detect columns and delimiter)
-python forgematica_to_sheets.py --csv path/to/materials.csv
+pip install -r requirements.txt
+````
 
-# Specify the output filename and default stack size
-python forgematica_to_sheets.py --csv materials.csv --out my_sheet.xlsx --default-stack-size 64
+(If you’re in a system-managed Python environment, using a virtual environment is recommended.)
 
-# Override column names if your CSV headers are different
-python forgematica_to_sheets.py \
-  --csv materials.csv \
-  --name-col "Item Name" \
-  --total-col "Qty Required" \
-  --missing-col "Missing Qty" \
-  --available-col "Have"
+---
+
+## ⚙️ Usage
+
+```bash
+python3 forgematica_to_sheets.py --csv path/to/material_list.csv
 ```
 
-Then upload the generated `.xlsx` to Google Drive and **open with Google Sheets** — all formulas are preserved.
+Optional arguments:
 
-# 📊 Columns & formulas (Sheets-side)
+| Flag                   | Description                                                                         |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| `--out`                | Path to save the output `.xlsx` file (default: `forgematica_materials_sheets.xlsx`) |
+| `--delimiter`          | Override the CSV delimiter (auto-detected if omitted)                               |
+| `--name-col`           | Column name in CSV for item/material names                                          |
+| `--total-col`          | Column name for the total units required                                            |
+| `--missing-col`        | Column name for how many are missing                                                |
+| `--available-col`      | Column name for how many are available                                              |
+| `--default-stack-size` | Default stack size to use if a material isn’t in the lookup table (default: 64)     |
 
-Both **TOTALS_ALL** and **MISSING_ONLY** include:
+---
 
-- **Materials**
-- **Total (units)**
+## 🧮 How the Sheets Are Structured
 
-  - On **MISSING_ONLY**, the effective total is computed as:
-    `=MAX(0, Missing + User units + User stacks × Stack Size)`
+The output Excel/Sheets file contains:
 
-- **Stack Size**
+* **TOTALS\_ALL**: shows for each material:
 
-  - On **MISSING_ONLY** this is:
-    `=IFERROR(VLOOKUP(Materials, REFS!A:B, 2, FALSE), <default>)` (defaults to 64 unless changed)
-  - You can tailor stack size per item (e.g., Ender Pearls 16, tools/armor 1)
+  * Total units required
+  * Stack size
+  * Number of stacks needed (rounded up)
+  * Number of double chests needed (rounded up)
+  * Remainders after last double chest and after last stack
 
-- **# Stacks (ceil)** = `CEILING(Total/StackSize, 1)` (round up full stacks) — official Sheets function. ([Assistance Google][1])
-- **# Double Chests** = `IF(Total=0, 0, CEILING(Stacks/54, 1))` — **54 slots** per double chest per Minecraft Wiki. ([Minecraft Wiki][2])
-- **Stacks after last double** = `MOD(Stacks, 54)` — official Sheets MOD. ([Assistance Google][3])
-- **Units after last stack** = `MOD(Total, StackSize)` — official Sheets MOD. ([Assistance Google][3])
+* **MISSING\_ONLY**: starting from the “Missing” quantities, lets you fill in:
 
-On **MISSING_ONLY** you also get:
+  * “User units (you have)”
+  * “User stacks (you have)”
+  * Then it computes effective total units you still need
+  * Same derived columns as above (stacks, chests, remainders)
 
-- **User units (editable)**
-- **User stacks (editable)**
-- **Computed Total (units)** (formula above)
+* **REFS**: reference sheet with material → stack size mappings (editable), plus documentation links (about `CEILING`, `MOD`, etc.).
 
-The script adds **data validation** so editable numeric cells don’t go negative.
+---
 
-# 🔧 Under the hood (why it’s generic)
+## 🛠 Tips & Customization
 
-- **Delimiter auto-detection** (`,`, `;`, tab, `|`) with override flag `--delimiter`.
-- **Fuzzy header detection** for common words (e.g., `name/item/material`, `total/required/amount`, `missing/needed`, `available/have`). You can override with `--name-col`, `--total-col`, etc.
-- **Grouping by material** in Python (just to consolidate rows); **all derived math** (stacks, chests, remainders) is done via **Google Sheets functions**:
+* You can edit the **Stack Size** per material via the REFS sheet; the script sets a default if no custom value is found.
+* If you want, you can convert per-row formulas into `ARRAYFORMULA`s in Google Sheets to reduce repetition.
+* If your CSV has unusual headers, use the `--name-col`, `--total-col` etc. flags to manually tell the script which columns to use.
 
-  - `CEILING` / `CEILING.MATH` for rounded-up counts in Sheets. ([Assistance Google][1])
-  - `MOD` for remainders. ([Assistance Google][3])
-  - `VLOOKUP` for per-item stack sizes from the REFS sheet. ([Assistance Google][4])
+---
 
-- **Double chest capacity** fixed at 54 slots (Minecraft Wiki). ([Minecraft Wiki][2])
+## ⚠ Known Issues / Limitations
 
-# 💡 Tips
+* Materials with stack sizes other than 64 must be added to the REFS lookup, otherwise they'll default (which may over- or under-estimate).
+* Very large CSVs may lead to large spreadsheets; Google Sheets may slow down for many thousands of rows with formulas.
+* The script sums duplicate material names, but exact matching is case-sensitive after normalization; very slightly different names may produce separate lines.
 
-- Extend the **REFS** sheet with your own `Materials → Stack Size` pairs; the `VLOOKUP` picks them up automatically. (Docs: VLOOKUP. ([Assistance Google][4]))
-- Prefer `CEILING`/`CEILING.MATH` for “full stacks” rounding; see Sheets docs for nuances. ([Assistance Google][1])
-- `MOD` is ideal for “remaining stacks/units after last chest/stack”. ([Assistance Google][3])
+---
 
-If you’d like, I can also:
+## 📂 Project Structure
 
-- Add an optional **third sheet** that reconciles `Available + User inputs` versus `Totals` to highlight what’s still missing.
-- Switch per-row formulas to **`ARRAYFORMULA`** per column if you prefer a single formula at the top (common in large sheets).
+```text
+/
+├─ forgematica_to_sheets.py        # main script
+├─ requirements.txt                # Python dependencies
+├─ README.md                       # this file
+├─ sample_csv/                     # (optional) example CSV files
+│   └─ example_material_list.csv
+└─ output/                         # (optional) folder for generated .xlsx outputs
+```
+
+---
+
+## ✍ Contributing
+
+Contributions welcome! If you see bugs, want new features (e.g. inventory reconciliation, automated stack size suggestions, better CSV format support), feel free to:
+
+1. Fork the repository
+2. Create a feature branch (e.g. `feature/my-addition`)
+3. Make your changes; include tests/examples if possible
+4. Submit a pull request
